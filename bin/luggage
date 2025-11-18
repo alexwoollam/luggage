@@ -1,0 +1,54 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// Try Composer autoload, otherwise a tiny PSR-4 fallback for dev use.
+$autoloadTried = false;
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        $autoloadTried = true;
+        break;
+    }
+}
+if (!$autoloadTried) {
+    spl_autoload_register(function ($class) {
+        if (str_starts_with($class, 'Luggage\\')) {
+            $path = __DIR__ . '/../src/' . str_replace('Luggage\\', '', $class);
+            $path = str_replace('\\', DIRECTORY_SEPARATOR, $path) . '.php';
+            if (is_file($path)) {
+                require $path;
+            }
+        }
+    });
+}
+
+use Luggage\Logging\StdoutLogger;
+use Luggage\Queue\FileQueueDriver;
+use Luggage\Worker\Worker;
+use Luggage\Worker\WorkerOptions;
+
+$opts = getopt('', ['dir::', 'queue::', 'sleep::', 'once::', 'stop-on-empty::', 'memory::', 'debug::']);
+
+$baseDir = $opts['dir'] ?? getenv('LUGGAGE_DIR') ?: __DIR__ . '/../storage/luggage';
+$queue = $opts['queue'] ?? getenv('LUGGAGE_QUEUE') ?: 'default';
+$sleep = (int) ($opts['sleep'] ?? getenv('LUGGAGE_SLEEP') ?: 1);
+$memory = (int) ($opts['memory'] ?? getenv('LUGGAGE_MEMORY') ?: 0);
+$once = filter_var($opts['once'] ?? false, FILTER_VALIDATE_BOOLEAN);
+$stopOnEmpty = $once || filter_var($opts['stop-on-empty'] ?? false, FILTER_VALIDATE_BOOLEAN);
+$debug = filter_var($opts['debug'] ?? getenv('LUGGAGE_DEBUG') ?: false, FILTER_VALIDATE_BOOLEAN);
+
+@mkdir($baseDir, 0777, true);
+
+$driver = new FileQueueDriver($baseDir);
+$logger = new StdoutLogger(debug: $debug);
+$worker = new Worker($driver, logger: $logger);
+$options = new WorkerOptions(queue: $queue, sleepSeconds: $sleep, stopOnEmpty: $stopOnEmpty, memoryLimitMb: $memory);
+
+if ($once) {
+    $worker->runOnce($options);
+} else {
+    $worker->run($options);
+}
+
